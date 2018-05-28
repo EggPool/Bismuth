@@ -7,14 +7,14 @@
 # rolling back indexes: 1424 and 945
 
 
-VERSION = "4.2.4.7"
+VERSION = "4.2.4.71"
 
 # Bis specific modules
 import log, options, connections, peershandler, apihandler
 
 import shutil, socketserver, base64, hashlib, os, re, sqlite3, sys, threading, time, socks, random, keys, math, requests, tarfile, essentials, glob
 from decimal import *
-import tokensv2
+import tokens
 import aliases
 from quantizer import *
 from ann import ann_get, ann_ver_get
@@ -227,86 +227,101 @@ def db_to_drive(hdd, h, hdd2, h2):
     global hdd_block
 
     app_log.warning("Moving new data to HDD")
+    try:
+        if ram_conf == 1:  # select RAM as source database
+            source_db = sqlite3.connect(ledger_ram_file, uri=True, timeout=1)
+        else:  # select hyper.db as source database
+            source_db = sqlite3.connect(hyper_path_conf, timeout=1)
 
-    if ram_conf == 1:  # select RAM as source database
-        source_db = sqlite3.connect(ledger_ram_file, uri=True, timeout=1)
-    else:  # select hyper.db as source database
-        source_db = sqlite3.connect(hyper_path_conf, timeout=1)
+        source_db.text_factory = str
+        sc = source_db.cursor()
 
-    source_db.text_factory = str
-    sc = source_db.cursor()
+        execute_param(sc, ("SELECT * FROM transactions WHERE block_height > ? ORDER BY block_height ASC"), (hdd_block,))
+        result1 = sc.fetchall()
 
-    execute_param(sc, ("SELECT * FROM transactions WHERE block_height > ? ORDER BY block_height ASC"), (hdd_block,))
-    result1 = sc.fetchall()
+        if full_ledger == 1:  # we want to save to ledger.db
+            for x in result1:
+                h.execute("INSERT INTO transactions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7], x[8], x[9], x[10], x[11]))
+            commit(hdd)
 
-    if full_ledger == 1:  # we want to save to ledger.db
-        for x in result1:
-            h.execute("INSERT INTO transactions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7], x[8], x[9], x[10], x[11]))
-        commit(hdd)
+        if ram_conf == 1:  # we want to save to hyper.db from RAM/hyper.db depending on ram conf
+            for x in result1:
+                h2.execute("INSERT INTO transactions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7], x[8], x[9], x[10], x[11]))
+            commit(hdd2)
 
-    if ram_conf == 1:  # we want to save to hyper.db from RAM/hyper.db depending on ram conf
-        for x in result1:
-            h2.execute("INSERT INTO transactions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7], x[8], x[9], x[10], x[11]))
-        commit(hdd2)
+        execute_param(sc, ("SELECT * FROM misc WHERE block_height > ? ORDER BY block_height ASC"), (hdd_block,))
+        result2 = sc.fetchall()
 
-    execute_param(sc, ("SELECT * FROM misc WHERE block_height > ? ORDER BY block_height ASC"), (hdd_block,))
-    result2 = sc.fetchall()
+        if full_ledger == 1:  # we want to save to ledger.db from RAM/hyper.db depending on ram conf
+            for x in result2:
+                h.execute("INSERT INTO misc VALUES (?,?)", (x[0], x[1]))
+            commit(hdd)
 
-    if full_ledger == 1:  # we want to save to ledger.db from RAM/hyper.db depending on ram conf
-        for x in result2:
-            h.execute("INSERT INTO misc VALUES (?,?)", (x[0], x[1]))
-        commit(hdd)
+        if ram_conf == 1:  # we want to save to hyper.db from RAM
+            for x in result2:
+                h2.execute("INSERT INTO misc VALUES (?,?)", (x[0], x[1]))
+            commit(hdd2)
 
-    if ram_conf == 1:  # we want to save to hyper.db from RAM
-        for x in result2:
-            h2.execute("INSERT INTO misc VALUES (?,?)", (x[0], x[1]))
-        commit(hdd2)
+        # reward
+        execute_param(sc, ('SELECT * FROM transactions WHERE address = "Development Reward" AND CAST(openfield AS INTEGER) > ?'), (hdd_block,))
+        result3 = sc.fetchall()
+        if full_ledger == 1:  # we want to save to ledger.db from RAM
+            for x in result3:
+                h.execute("INSERT INTO transactions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7], x[8], x[9], x[10], x[11]))
+            commit(hdd)
 
-    # reward
-    execute_param(sc, ('SELECT * FROM transactions WHERE address = "Development Reward" AND CAST(openfield AS INTEGER) > ?'), (hdd_block,))
-    result3 = sc.fetchall()
-    if full_ledger == 1:  # we want to save to ledger.db from RAM
-        for x in result3:
-            h.execute("INSERT INTO transactions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7], x[8], x[9], x[10], x[11]))
-        commit(hdd)
+        if ram_conf == 1:  # we want to save to hyper.db from RAM
+            for x in result3:
+                h2.execute("INSERT INTO transactions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7], x[8], x[9], x[10], x[11]))
+            commit(hdd2)
+        # reward
 
-    if ram_conf == 1:  # we want to save to hyper.db from RAM
-        for x in result3:
-            h2.execute("INSERT INTO transactions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7], x[8], x[9], x[10], x[11]))
-        commit(hdd2)
-    # reward
+        h2.execute("SELECT block_height FROM transactions ORDER BY block_height DESC LIMIT 1")
+        hdd_block = h2.fetchone()[0]
 
-    h2.execute("SELECT block_height FROM transactions ORDER BY block_height DESC LIMIT 1")
-    hdd_block = h2.fetchone()[0]
-
-    app_log.warning("Ledger updated successfully")
+        app_log.warning("Ledger updated successfully")
+    except Exception as e:
+        app_log.warning("Save to disk failed: {} - Will raise.".format(e))
+        raise
 
 def index_define():
-    if "testnet" in version:
-        index_db = "static/index_test.db"
-    else:
-        index_db = "static/index.db"
-    index = sqlite3.connect(index_db, timeout=1)
-    index.text_factory = str
-    index_cursor = index.cursor()
-    index.execute("PRAGMA page_size = 4096;")
-    return index, index_cursor
+    try:
+        if "testnet" in version:
+            index_db = "static/index_test.db"
+        else:
+            index_db = "static/index.db"
+        index = sqlite3.connect(index_db, timeout=1)
+        index.text_factory = str
+        index_cursor = index.cursor()
+        index.execute("PRAGMA page_size = 4096;")
+        return index, index_cursor
+    except Exception as e:
+        app_log.warning("index_define failed: {} - Will raise.".format(e))
+        raise
+
 
 def db_h_define():
-    hdd = sqlite3.connect(ledger_path_conf, timeout=1)
-    hdd.text_factory = str
-    h = hdd.cursor()
-    hdd.execute("PRAGMA page_size = 4096;")
-    return hdd, h
+    try:
+        hdd = sqlite3.connect(ledger_path_conf, timeout=1)
+        hdd.text_factory = str
+        h = hdd.cursor()
+        hdd.execute("PRAGMA page_size = 4096;")
+        return hdd, h
+    except Exception as e:
+        app_log.warning("db_h_define failed: {} - Will raise.".format(e))
+        raise
 
 
 def db_h2_define():
-    hdd2 = sqlite3.connect(hyper_path_conf, timeout=1)
-    hdd2.text_factory = str
-    h2 = hdd2.cursor()
-    hdd2.execute("PRAGMA page_size = 4096;")
-    return hdd2, h2
-
+    try:
+        hdd2 = sqlite3.connect(hyper_path_conf, timeout=1)
+        hdd2.text_factory = str
+        h2 = hdd2.cursor()
+        hdd2.execute("PRAGMA page_size = 4096;")
+        return hdd2, h2
+    except Exception as e:
+        app_log.warning("db_h2_define failed: {} - Will raise.".format(e))
+        raise
 
 def db_c_define():
     global hdd_block
@@ -323,7 +338,7 @@ def db_c_define():
         c = conn.cursor()
 
     except Exception as e:
-        app_log.info(e)
+        app_log.warning("db_c_define failed: {} - Will raise.".format(e))
 
     return conn, c
 
@@ -837,34 +852,36 @@ def manager(c):
     until_purge = 0
 
     while True:
-        # dict_keys = peer_dict.keys()
-        # random.shuffle(peer_dict.items())
-        if until_purge == 0:
-            # will purge once at start, then about every hour (120 * 30 sec)
-            mp.MEMPOOL.purge()
-            until_purge = 120
+        try:
+            # dict_keys = peer_dict.keys()
+            # random.shuffle(peer_dict.items())
+            if until_purge == 0:
+                # will purge once at start, then about every hour (120 * 30 sec)
+                mp.MEMPOOL.purge()
+                until_purge = 120
 
-        until_purge -= 1
+            until_purge -= 1
 
-        # peer management
-        peers.manager_loop(target=worker)
+            # peer management
+            peers.manager_loop(target=worker)
 
-        app_log.warning("Status: Threads at {} / {}".format(threading.active_count(), thread_limit_conf))
-        app_log.info("Status: Syncing nodes: {}".format(syncing))
-        app_log.info("Status: Syncing nodes: {}/3".format(len(syncing)))
+            app_log.warning("Status: Threads at {} / {}".format(threading.active_count(), thread_limit_conf))
+            app_log.info("Status: Syncing nodes: {}".format(syncing))
+            app_log.info("Status: Syncing nodes: {}/3".format(len(syncing)))
 
-        # Status display for Peers related info
-        peers.status_log()
-        mp.MEMPOOL.status()
+            # Status display for Peers related info
+            peers.status_log()
+            mp.MEMPOOL.status()
 
-
-        # last block
-        execute(c, "SELECT block_height, timestamp FROM transactions WHERE reward != 0 ORDER BY block_height DESC LIMIT 1;")  # or it takes the first
-        result = c.fetchall()[0]
-        last_block = result[0]
-        last_block_ago = quantize_two(result[1])
-        app_log.warning("Status: Last block {} was generated {} minutes ago".format(last_block, '%.2f' % ((quantize_two(time.time()) - last_block_ago) / 60)))
-        # last block
+            # last block
+            execute(c, "SELECT block_height, timestamp FROM transactions WHERE reward != 0 ORDER BY block_height DESC LIMIT 1;")  # or it takes the first
+            result = c.fetchall()[0]
+            last_block = result[0]
+            last_block_ago = quantize_two(result[1])
+            app_log.warning("Status: Last block {} was generated {} minutes ago".format(last_block, '%.2f' % ((quantize_two(time.time()) - last_block_ago) / 60)))
+            # last block
+        except Exception as e:
+            app_log.warning("Error in manager: {}".format(e))
 
         # app_log.info(threading.enumerate() all threads)
         time.sleep(30)
@@ -1307,97 +1324,104 @@ def digest_block(data, sdef, peer_ip, conn, c, hdd, h, hdd2, h2, h3):
 
 def coherence_check():
     app_log.warning("Status: Testing chain coherence")
-    if full_ledger == 1:
-        chains_to_check = [ledger_path_conf, hyper_path_conf]
-    else:
-        chains_to_check = [hyper_path_conf]
+    try:
+        if full_ledger == 1:
+            chains_to_check = [ledger_path_conf, hyper_path_conf]
+        else:
+            chains_to_check = [hyper_path_conf]
 
-    for chain in chains_to_check:
-        conn = sqlite3.connect(chain)
-        c = conn.cursor()
+        for chain in chains_to_check:
+            conn = sqlite3.connect(chain)
+            c = conn.cursor()
 
-        # perform test on transaction table
-        y = None
-        for row in c.execute("SELECT block_height FROM transactions WHERE reward != 0 AND block_height != (0 OR 1) ORDER BY block_height ASC"):
-            y_init = row[0]
+            # perform test on transaction table
+            y = None
+            for row in c.execute("SELECT block_height FROM transactions WHERE reward != 0 AND block_height != (0 OR 1) ORDER BY block_height ASC"):
+                y_init = row[0]
 
-            if y is None:
-                y = y_init
+                if y is None:
+                    y = y_init
 
-            if row[0] != y:
-                for chain2 in chains_to_check:
-                    conn2 = sqlite3.connect(chain2)
-                    c2 = conn2.cursor()
-                    app_log.warning("Status: Chain {} transaction coherence error at: {}".format(chain, row[0]-1))
-                    c2.execute("DELETE FROM transactions WHERE block_height >= ?", (row[0]-1,))
-                    conn2.commit()
-                    c2.execute("DELETE FROM misc WHERE block_height >= ?", (row[0]-1,))
-                    conn2.commit()
+                if row[0] != y:
+                    for chain2 in chains_to_check:
+                        conn2 = sqlite3.connect(chain2)
+                        c2 = conn2.cursor()
+                        app_log.warning("Status: Chain {} transaction coherence error at: {}".format(chain, row[0]-1))
+                        c2.execute("DELETE FROM transactions WHERE block_height >= ?", (row[0]-1,))
+                        conn2.commit()
+                        c2.execute("DELETE FROM misc WHERE block_height >= ?", (row[0]-1,))
+                        conn2.commit()
 
-                    execute_param(conn2, ('DELETE FROM transactions WHERE address = "Development Reward" AND CAST(openfield AS INTEGER) >= ?'), (row[0]-1,))
-                    commit(conn2)
-                    conn2.close()
+                        execute_param(conn2, ('DELETE FROM transactions WHERE address = "Development Reward" AND CAST(openfield AS INTEGER) >= ?'), (row[0]-1,))
+                        commit(conn2)
+                        conn2.close()
 
-                    # rollback indices
-                    tokens_rollback(y, app_log)
-                    aliases_rollback(y, app_log)
-                    # rollback indices
+                        # rollback indices
+                        tokens_rollback(y, app_log)
+                        aliases_rollback(y, app_log)
+                        # rollback indices
 
 
 
-                    app_log.warning("Status: Due to a coherence issue at block {}, {} has been rolled back and will be resynchronized".format(y, chain))
-                break
+                        app_log.warning("Status: Due to a coherence issue at block {}, {} has been rolled back and will be resynchronized".format(y, chain))
+                    break
 
-            y = y + 1
+                y = y + 1
 
-        # perform test on misc table
-        y = None
+            # perform test on misc table
+            y = None
 
-        for row in c.execute("SELECT block_height FROM misc WHERE block_height > ? ORDER BY block_height ASC", (300000,)):
-            y_init = row[0]
+            for row in c.execute("SELECT block_height FROM misc WHERE block_height > ? ORDER BY block_height ASC", (300000,)):
+                y_init = row[0]
 
-            if y is None:
-                y = y_init
-                # print("assigned")
-                # print (row[0], y)
+                if y is None:
+                    y = y_init
+                    # print("assigned")
+                    # print (row[0], y)
 
-            if row[0] != y:
-                #print(row[0], y)
-                for chain2 in chains_to_check:
-                    conn2 = sqlite3.connect(chain2)
-                    c2 = conn2.cursor()
-                    app_log.warning("Status: Chain {} difficulty coherence error at: {}".format(chain, row[0]-1))
-                    c2.execute("DELETE FROM transactions WHERE block_height >= ?", (row[0]-1,))
-                    conn2.commit()
-                    c2.execute("DELETE FROM misc WHERE block_height >= ?", (row[0]-1,))
-                    conn2.commit()
+                if row[0] != y:
+                    #print(row[0], y)
+                    for chain2 in chains_to_check:
+                        conn2 = sqlite3.connect(chain2)
+                        c2 = conn2.cursor()
+                        app_log.warning("Status: Chain {} difficulty coherence error at: {}".format(chain, row[0]-1))
+                        c2.execute("DELETE FROM transactions WHERE block_height >= ?", (row[0]-1,))
+                        conn2.commit()
+                        c2.execute("DELETE FROM misc WHERE block_height >= ?", (row[0]-1,))
+                        conn2.commit()
 
-                    execute_param(conn2, ('DELETE FROM transactions WHERE address = "Development Reward" AND CAST(openfield AS INTEGER) >= ?'), (row[0]-1,))
-                    commit(conn2)
-                    conn2.close()
+                        execute_param(conn2, ('DELETE FROM transactions WHERE address = "Development Reward" AND CAST(openfield AS INTEGER) >= ?'), (row[0]-1,))
+                        commit(conn2)
+                        conn2.close()
 
-                    # rollback indices
-                    tokens_rollback(y, app_log)
-                    aliases_rollback(y, app_log)
-                    # rollback indices
+                        # rollback indices
+                        tokens_rollback(y, app_log)
+                        aliases_rollback(y, app_log)
+                        # rollback indices
 
-                    app_log.warning("Status: Due to a coherence issue at block {}, {} has been rolled back and will be resynchronized".format(y, chain))
-                break
+                        app_log.warning("Status: Due to a coherence issue at block {}, {} has been rolled back and will be resynchronized".format(y, chain))
+                    break
 
-            y = y + 1
+                y = y + 1
 
-        app_log.warning("Status: Chain coherence test complete for {}".format(chain))
-        conn.close()
+            app_log.warning("Status: Chain coherence test complete for {}".format(chain))
+            conn.close()
+    except Exception as e:
+        app_log.warning("Chain coherence failed with {}".format(e))
+        raise
 
 
 # init
 def db_maintenance(conn):
     # db maintenance
-    app_log.warning("Status: Database maintenance started")
-    execute(conn, "VACUUM")
-    mp.MEMPOOL.vacuum()
-    app_log.warning("Status: Database maintenance finished")
-
+    try:
+        app_log.warning("Status: Database maintenance started")
+        execute(conn, "VACUUM")
+        mp.MEMPOOL.vacuum()
+        app_log.warning("Status: Database maintenance finished")
+    except Exception as e:
+        app_log.warning("db_maintenance failed with {}".format(e))
+        raise
 
 
 class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
@@ -1947,7 +1971,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                 elif data == "txsend":
                     # if (peer_ip in allowed or "any" in allowed):
                     if peers.is_allowed(peer_ip, data):
-                        tx_remote = list(connections.receive(self.request, 10))
+                        tx_remote = str(connections.receive(self.request, 10))
 
                         # receive data necessary for remote tx construction
                         remote_tx_timestamp = tx_remote[0]
