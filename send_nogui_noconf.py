@@ -111,9 +111,9 @@ print("Fee: %s" % fee)
 
 confirm = input("Confirm (y/n): ")
 
-if confirm != 'y':
-    print("Transaction cancelled, user confirmation failed")
-    exit(1)
+# if confirm != 'y':
+#    print("Transaction cancelled, user confirmation failed")
+#    exit(1)
 
 # hardfork fee display
 try:
